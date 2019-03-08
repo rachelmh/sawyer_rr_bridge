@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 import roslib
-roslib.load_manifest('baxter_rr_bridge')
+roslib.load_manifest('sawyer_rr_bridge')
 import rospy
-import baxter_interface
+import intera_interface
 from sensor_msgs.msg import Image
 from sensor_msgs.msg import CameraInfo
 import time
@@ -18,13 +18,13 @@ import traceback
 import cv2
 import cv2.aruco as aruco
 
-baxter_servicedef="""
-#Service to provide simple interface to Baxter
-service BaxterCamera_interface
+sawyer_servicedef="""
+#Service to provide simple interface to Sawyer
+service SaqyerCamera_interface
 
 option version 0.4
 
-struct BaxterImage
+struct SawyerImage
     field int32 width
     field int32 height
     field int32 step
@@ -47,7 +47,7 @@ struct ARtagInfo
     field int32[] ids
 end struct
 
-object BaxterCamera
+object SawyerCamera
 
     property uint8 camera_open
 
@@ -62,22 +62,22 @@ object BaxterCamera
     function void setMarkerSize(double markerSize)
     
     # functions to acquire data on the image
-    function BaxterImage getCurrentImage()
+    function SawyerImage getCurrentImage()
     function ImageHeader getImageHeader()
     function CameraIntrinsics getCameraIntrinsics()
     function double getMarkerSize()
     function ARtagInfo ARtag_Detection()
     
     # pipe to stream images through
-    pipe BaxterImage ImageStream
+    pipe SawyerImage ImageStream
     
 end object
 
 """
-class BaxterCamera_impl(object):
+class SawyerCamera_impl(object):
     def __init__(self, camera_name, mode, half_res):
         print "Initializing ROS Node"
-        rospy.init_node('baxter_cameras', anonymous = True)
+        rospy.init_node('sawyer_cameras', anonymous = True)
         
         
         # Lock for multithreading
@@ -89,7 +89,8 @@ class BaxterCamera_impl(object):
         self._imagestream_endpoints_lock = threading.RLock()
         
         # get access to camera controls from RSDK
-        self._camera = baxter_interface.CameraController(camera_name)
+        self._camera = intera_interface.Cameras()
+        # self._camera = intera_interface.CameraController(camera_name)
         self._camera_name = camera_name;
         
         # automatically close camera at start
@@ -99,7 +100,7 @@ class BaxterCamera_impl(object):
         # set constant ImageHeader structure
         self.setResolution(mode,half_res)
         self._image_header = RR.RobotRaconteurNode.s.NewStructure( 
-                                    "BaxterCamera_interface.ImageHeader" )
+                                    "SawyerCamera_interface.ImageHeader" )
         self._image_header.width = int(self._camera.resolution[0])
         self._image_header.height = int(self._camera.resolution[1])
         self._image_header.step = int(4)
@@ -114,8 +115,8 @@ class BaxterCamera_impl(object):
         self._camera.white_balance_green = self._camera.CONTROL_AUTO
         self._camera.white_balance_blue = self._camera.CONTROL_AUTO
         
-        # set BaxterImage struct
-        self._image = RR.RobotRaconteurNode.s.NewStructure("BaxterCamera_interface.BaxterImage")
+        # set SawyerImage struct
+        self._image = RR.RobotRaconteurNode.s.NewStructure("SawyerCamera_interface.SawyerImage")
         self._image.width = self._image_header.width
         self._image.height = self._image_header.height
         self._image.step = self._image_header.step
@@ -186,7 +187,7 @@ class BaxterCamera_impl(object):
         if (self._camera_intrinsics is None):
             print "Setting Camera Intrinsic Data"
             self._camera_intrinsics = RR.RobotRaconteurNode.s.NewStructure( 
-                                        "BaxterCamera_interface.CameraIntrinsics" )
+                                        "SawyerCamera_interface.CameraIntrinsics" )
             K = list(data.K)
             K[2] -= data.roi.x_offset;
             K[5] -= data.roi.y_offset;
@@ -289,7 +290,7 @@ class BaxterCamera_impl(object):
         if ids is not None:
             Tmat = []
             IDS = []
-            detectioninfo = RR.RobotRaconteurNode.s.NewStructure("BaxterCamera_interface.ARtagInfo")
+            detectioninfo = RR.RobotRaconteurNode.s.NewStructure("SawyerCamera_interface.ARtagInfo")
             for anid in ids:
                 IDS.append(anid[0])
             for corner in corners:
@@ -391,7 +392,7 @@ class BaxterCamera_impl(object):
 
 def main(argv):
     # parse command line arguments
-    parser = argparse.ArgumentParser(description='Initialize Baxter Camera.')
+    parser = argparse.ArgumentParser(description='Initialize Sawyer Camera.')
     parser.add_argument('camera_name', metavar='camera_name',
 			   choices=['left_hand_camera', 'right_hand_camera', 'head_camera'], 
 			   help='name of the camera to connect to')
@@ -409,7 +410,7 @@ def main(argv):
     RR.RobotRaconteurNode.s.UseNumPy=True
 
     #Set the RobotRaconteur Node name
-    RR.RobotRaconteurNode.s.NodeName="BaxterCameraServer"
+    RR.RobotRaconteurNode.s.NodeName="SawyerCameraServer"
 
     #Create transport, register it, and start the server
     print "Registering Transport"
@@ -424,19 +425,19 @@ def main(argv):
     
     #Register the service type and the service
     print "Starting Service"
-    RR.RobotRaconteurNode.s.RegisterServiceType(baxter_servicedef)
+    RR.RobotRaconteurNode.s.RegisterServiceType(sawyer_servicedef)
     
     #Initialize object
-    baxter_obj = BaxterCamera_impl(args.camera_name, args.mode, args.half_res)
+    sawyer_obj = SawyerCamera_impl(args.camera_name, args.mode, args.half_res)
     
     RR.RobotRaconteurNode.s.RegisterService(args.camera_name, 
-				"BaxterCamera_interface.BaxterCamera", baxter_obj)
+				"SawyerCamera_interface.SawyerCamera", sawyer_obj)
 
     print "Service started, connect via"
-    print "tcp://localhost:" + str(port) + "/BaxterCameraServer/" + args.camera_name
+    print "tcp://localhost:" + str(port) + "/SawyerCameraServer/" + args.camera_name
     raw_input("press enter to quit...\r\n")
 
-    baxter_obj.closeCamera()
+    sawyer_obj.closeCamera()
 
     # This must be here to prevent segfault
     RR.RobotRaconteurNode.s.Shutdown()

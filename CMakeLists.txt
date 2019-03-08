@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(baxter_rr_bridge)
+project(sawyer_rr_bridge)
 
 find_package(catkin
   REQUIRED
@@ -10,8 +10,8 @@ find_package(catkin
   trajectory_msgs
   cv_bridge
   dynamic_reconfigure
-  baxter_core_msgs
-  baxter_interface
+  intera_core_msgs
+  intera_interface
 )
 
 catkin_python_setup()
@@ -25,8 +25,8 @@ catkin_package(
   trajectory_msgs
   cv_bridge
   dynamic_reconfigure
-  baxter_core_msgs
-  baxter_interface
+  intera_core_msgs
+  intera_interface
 )
 
 install(

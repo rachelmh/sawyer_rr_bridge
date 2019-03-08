@@ -26,6 +26,8 @@ from intera_core_msgs.srv import (
     SolvePositionIKRequest,
 )
 
+from sawyer_pykdl import sawyer_kinematics
+
 sawyer_servicedef="""
 #Service to provide simple interface to Sawyer
 service SawyerJoint_Interface
@@ -40,12 +42,23 @@ property double[] endeffector_positions
 property double[] endeffector_orientations
 property double[] endeffector_twists
 property double[] endeffector_wrenches
+property double[] endeffector_velocity
+property double[] pseudoinverse_Jacobian
+property double[] Jacobian
+property double[] inertia
 
 function void setControlMode(uint8 mode)
 function void setJointCommand(string limb, double[] command)
 function void setPositionModeSpeed(double speed)
-#function void readpos(double speed)
+function void readJointPositions()
+function void Sawyer_movetoNeutral()
+
+
+
+
+
 function double[] solveIKfast(double[] positions, double[] quaternions, string limb_choice)
+
 end object
 
 """
@@ -71,6 +84,7 @@ class Sawyer_impl(object):
         self._right = intera_interface.Limb('right')
         #self._l_jnames = self._left.joint_names()
         self._r_jnames = self._right.joint_names()
+        self.kin=sawyer_kinematics('right')
         
         # data initializations
         self._jointpos = [0]*7
@@ -80,18 +94,26 @@ class Sawyer_impl(object):
         self._ee_or = [0]*4
         self._ee_tw = [0]*6
         self._ee_wr = [0]*6
+        self._ee_vel = [0]*6
+
+        self._pijac=[]  #numpy.matrix('0,0,0,0,0,0;0,0,0,0,0,0;0,0,0,0,0,0;0,0,0,0,0,0;0,0,0,0,0,0;0,0,0,0,0,0;0,0,0,0,0,0')
+        self._jac=[]  #numpy.matrix('0,0,0,0,0,0;0,0,0,0,0,0;0,0,0,0,0,0;0,0,0,0,0,0;0,0,0,0,0,0;0,0,0,0,0,0;0,0,0,0,0,0')
+        self._inertia_mat=[] #numpy.matrix('0,0,0,0,0,0,0;0,0,0,0,0,0,0;0,0,0,0,0,0,0;0,0,0,0,0,0,0;0,0,0,0,0,0,0;0,0,0,0,0,0,0;0,0,0,0,0,0,0')
+
+
         #self._l_joint_command = dict(zip(self._l_jnames,[0.0]*7))
         self._r_joint_command = dict(zip(self._r_jnames,[0.0]*7))
         self.MODE_POSITION = 0;
         self.MODE_VELOCITY = 1;
         self.MODE_TORQUE = 2;
         self._mode = self.MODE_POSITION
-        
+        self.RMH_delay=.01
         # initial joint command is current pose
         self.readJointPositions()
         #self.setJointCommand('left',self._jointpos[0:7])
         self.setJointCommand('right',self._jointpos[0:7])
-                
+        
+
         # Start background threads
         self._running = True
         self._t_joints = threading.Thread(target=self.jointspace_worker)
@@ -106,7 +128,6 @@ class Sawyer_impl(object):
         self._t_command.daemon = True
         self._t_command.start()
 
-        self.RMH_delay=.05
 
     def close(self):
         self._running = False
@@ -115,7 +136,7 @@ class Sawyer_impl(object):
         self._t_command.join()
         
         if (self._mode != self.MODE_POSITION):
-            self._left.exit_control_mode()
+            
             self._right.exit_control_mode()
 
     @property	
@@ -146,6 +167,22 @@ class Sawyer_impl(object):
     def endeffector_wrenches(self):
         return self._ee_wr
     
+    @property 
+    def endeffector_velocity(self):
+        return self._ee_vel
+
+    @property 
+    def pseudoinverse_Jacobian(self):
+        return self._pijac
+
+    @property 
+    def Jacobian(self):
+        return self._jac
+
+    @property 
+    def inertia(self):
+        return self._inertia_mat
+
     def readJointPositions(self):
         #l_angles = self._left.joint_angles()
         r_angles = self._right.joint_angles()
@@ -201,6 +238,16 @@ class Sawyer_impl(object):
             self._ee_or[1] = r_pose['orientation'].x
             self._ee_or[2] = r_pose['orientation'].y
             self._ee_or[3] = r_pose['orientation'].z
+
+    def readKDL(self):
+        temppij=self.kin.jacobian_pseudo_inverse()
+        tempj=self.kin.jacobian()
+        tempi=self.kin.inertia()
+
+        self._pijac=numpy.array(temppij).flatten()
+        self._jac=numpy.array(tempj).flatten()
+        self._inertia_mat=numpy.array(tempi).flatten()
+        
         
     def readEndEffectorTwists(self):
         # l_twist = self._left.endpoint_velocity()
@@ -219,6 +266,7 @@ class Sawyer_impl(object):
             self._ee_tw[3] = r_twist['linear'].x
             self._ee_tw[4] = r_twist['linear'].y
             self._ee_tw[5] = r_twist['linear'].z
+
     def readEndEffectorWrenches(self):
         # l_wrench = self._left.endpoint_effort()
         # if l_wrench:
@@ -237,7 +285,25 @@ class Sawyer_impl(object):
             self._ee_wr[4] = r_wrench['force'].y
             self._ee_wr[5] = r_wrench['force'].z
     
-    
+    def readEndEffectorVelocity(self):
+
+        r_ee_vel = self._right.endpoint_velocity()
+        if r_pose:
+            # self._ee_pos[0] = r_pose['position'].x
+            # self._ee_pos[1] = r_pose['position'].y
+            # self._ee_pos[2] = r_pose['position'].z
+            # self._ee_or[0] = r_pose['orientation'].w
+            # self._ee_or[1] = r_pose['orientation'].x
+            # self._ee_or[2] = r_pose['orientation'].y
+            # self._ee_or[3] = r_pose['orientation'].z
+            self._ee_vel[0] = r_ee_vel['linear'].x
+            self._ee_vel[1] = r_ee_vel['linear'].y
+            self._ee_vel[2] = r_ee_vel['linear'].z
+            self._ee_vel[3] = r_ee_vel['angular'].w
+            self._ee_vel[4] = r_ee_vel['angular'].x
+            self._ee_vel[5] = r_ee_vel['angular'].y
+
+
     def setControlMode(self, mode):
         if mode != self.MODE_POSITION and \
                 mode != self.MODE_VELOCITY and \
@@ -380,7 +446,6 @@ class Sawyer_impl(object):
         return resp.joints[0].position
 
 
-
     def setJointCommand(self, limb, command):
         limb = limb.lower()
         if not limb in self._valid_limb_names.keys():
@@ -392,6 +457,8 @@ class Sawyer_impl(object):
         if self._valid_limb_names[limb] == 'right':
             for i in xrange(0,len(self._r_jnames)):
                 self._r_joint_command[self._r_jnames[i]] = command[i]
+
+ 
     
     def setPositionModeSpeed(self, speed):
         if speed < 0.0:
@@ -412,6 +479,7 @@ class Sawyer_impl(object):
             self.readJointPositions()
             self.readJointVelocities()
             self.readJointTorques()
+            self.readKDL()
             while (time.time() - t1 < self.RMH_delay):
                 # idle
                 time.sleep(0.001)
@@ -450,6 +518,7 @@ class Sawyer_impl(object):
                 self._right.set_joint_torques(self._r_joint_command)
             while (time.time() - t1 < self.RMH_delay):
                 # idle
+                #.01
                 time.sleep(0.001)
 
 def main(argv):
@@ -465,7 +534,7 @@ def main(argv):
     RR.RobotRaconteurNode.s.UseNumPy=True
 
     #Set the Node name
-    RR.RobotRaconteurNode.s.NodeName="SawyerJointServer"
+    RR.RobotRaconteurNode.s.NodeName="SawyerRMHServer"
 
     #Initialize object
     sawyer_obj = Sawyer_impl()
@@ -491,7 +560,7 @@ def main(argv):
                                           sawyer_obj)
 
     print "Service started, connect via"
-    print "tcp://localhost:" + str(port) + "/SawyerJointServer/Sawyer"
+    print "tcp://localhost:" + str(port) + "/SawyerRMHServer/Sawyer"
     raw_input("press enter to quit...\r\n")
     
     sawyer_obj.close()

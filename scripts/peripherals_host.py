@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 import roslib
-roslib.load_manifest('baxter_rr_bridge')
+roslib.load_manifest('sawyer_rr_bridge')
 import rospy
-import baxter_interface
+import intera_interface
 from sensor_msgs.msg import PointCloud
 from sensor_msgs.msg import Imu
 from std_msgs.msg import UInt16
 from std_msgs.msg import Empty
-from baxter_core_msgs.msg import SEAJointState
+from intera_core_msgs.msg import SEAJointState
 import tf
 
 import sys, argparse
@@ -19,9 +19,9 @@ import thread
 import threading
 import numpy
 
-baxter_servicedef="""
-#Service to provide simple interface to Baxter
-service BaxterPeripheral_interface
+sawyer_servicedef="""
+#Service to provide simple interface to Sawyer
+service SawyerPeripheral_interface
 
 option version 0.4
 
@@ -45,7 +45,7 @@ struct framePose
     field double[] quaternion
 end struct
 
-object BaxterPeripherals
+object SawyerPeripherals
 
 function void openGripper(string gripper)
 function void closeGripper(string gripper)
@@ -86,45 +86,50 @@ function framePose lookUptransforms(string target_frame, string source_frame)
 end object
 
 """
-class BaxterPeripherals_impl(object):
+class SawyerPeripherals_impl(object):
     def __init__(self):
         print "Initializing Node"
-        rospy.init_node('baxter_peripherals')
+        rospy.init_node('sawyer_peripherals')
         
         self._running = True
-        self._valid_limb_names = {'left': 'left', 
-                                    'l': 'left', 
-                                    'right': 'right',
-                                    'r': 'right'}
-        
+        # self._valid_limb_names = {'left': 'left', 
+        #                             'l': 'left', 
+        #                             'right': 'right',
+        #                             'r': 'right'}
+
+        self._valid_limb_names = {'right': 'right',
+                                    'r': 'right'}        
         # gripper initialization
-        self._grippers = {'left': baxter_interface.Gripper('left'), 
-                            'right': baxter_interface.Gripper('right')}
+        #self._grippers = {'right': intera_interface.Gripper('right')}
+        # self._grippers = {#'left': intera_interface.Gripper('left'), 
+        #                     'right': intera_interface.Gripper('right')}
         # Set grippers to defaults
-        self._grippers['left'].set_parameters( 
-                                self._grippers['left'].valid_parameters())
-        self._grippers['right'].set_parameters(
-                                self._grippers['right'].valid_parameters())
+        # self._grippers['left'].set_parameters( 
+        #                         self._grippers['left'].valid_parameters())
+        #self._grippers['right'].set_parameters(
+                                #self._grippers['right'].valid_parameters())
         
         # ranger initialization
-        self._rangers = {'left': baxter_interface.AnalogIO('left_hand_range'), 
-                       'right': baxter_interface.AnalogIO('right_hand_range')}
+        #self._rangers = {'right': intera_interface.AnalogIO('right_hand_range')}
+        # self._rangers = {'left': intera_interface.AnalogIO('left_hand_range'), 
+        #                'right': intera_interface.AnalogIO('right_hand_range')}
                             
         # accelerometer initialization
-        self._accelerometers = {'left': [0.0]*3, 'right': [0.0]*3}
-        rospy.Subscriber("/robot/accelerometer/left_accelerometer/state", 
-                                                                     Imu, 
-                                                self.left_accel_callback)
+        #self._accelerometers = {'left': [0.0]*3, 'right': [0.0]*3}
+        self._accelerometers = {'right': [0.0]*3}
+        # rospy.Subscriber("/robot/accelerometer/left_accelerometer/state", 
+        #                                                              Imu, 
+        #                                         self.left_accel_callback)
         rospy.Subscriber("/robot/accelerometer/right_accelerometer/state", 
                                                                       Imu, 
                                                 self.right_accel_callback)
         
         # head control initialization
-        self._head = baxter_interface.Head()
+        self._head = intera_interface.Head()
         
         # sonar initialization
         self._sonar_pointcloud = RR.RobotRaconteurNode.s.NewStructure( 
-                          'BaxterPeripheral_interface.SonarPointCloud' )
+                          'SawyerPeripheral_interface.SonarPointCloud' )
                                 
         self._sonar_state_sub = rospy.Subscriber(
                                         "/robot/sonar/head_sonar/state", 
@@ -139,7 +144,8 @@ class BaxterPeripherals_impl(object):
         self._sonar_enable_pub.publish(4095)
         
         # suppressions
-        self._suppress_body_avoidance = {'left': False, 'right': False}
+        self._suppress_body_avoidance = {'right': False}
+        #self._suppress_body_avoidance = {'left': False, 'right': False}
         self._supp_body_avoid_pubs = {'left': 
             rospy.Publisher("/robot/limb/left/suppress_body_avoidance", 
                                                                  Empty, 
@@ -148,46 +154,72 @@ class BaxterPeripherals_impl(object):
             rospy.Publisher("/robot/limb/right/suppress_body_avoidance", 
                                                                   Empty, 
                                                             latch=True)}
-                                        
-        self._suppress_collision_avoidance = {'left': False, 'right': False}
-        self._supp_coll_avoid_pubs = {'left': 
-            rospy.Publisher("/robot/limb/left/suppress_collision_avoidance", 
-                                                                      Empty, 
-                                                                latch=True), 
-                                        'right': 
-            rospy.Publisher("/robot/limb/right/suppress_collision_avoidance", 
-                                                                       Empty, 
-                                                                 latch=True)}
-                                        
-        self._suppress_contact_safety = {'left': False, 'right': False}
-        self._supp_con_safety_pubs = {'left': 
-            rospy.Publisher("/robot/limb/left/suppress_contact_safety", 
-                                                                 Empty, 
-                                                           latch=True), 
-                                        'right': 
-            rospy.Publisher("/robot/limb/right/suppress_contact_safety", 
+
+        self._supp_body_avoid_pubs = {'right': 
+            rospy.Publisher("/robot/limb/right/suppress_body_avoidance", 
                                                                   Empty, 
                                                             latch=True)}
                                         
-        self._suppress_cuff_interaction = {'left': False, 'right': False}
-        self._supp_cuff_int_pubs = {'left': 
-            rospy.Publisher("/robot/limb/left/suppress_cuff_interaction", 
-                                                                   Empty, 
-                                                             latch=True), 
-                                    'right': 
+        self._suppress_collision_avoidance = {'right': False}
+        # self._suppress_collision_avoidance = {'left': False, 'right': False}
+        self._supp_coll_avoid_pubs = {'right': 
+            rospy.Publisher("/robot/limb/right/suppress_collision_avoidance", 
+                                                                       Empty, 
+                                                                 latch=True)}
+        # self._supp_coll_avoid_pubs = {'left': 
+        #     rospy.Publisher("/robot/limb/left/suppress_collision_avoidance", 
+        #                                                               Empty, 
+        #                                                         latch=True), 
+        #                                 'right': 
+        #     rospy.Publisher("/robot/limb/right/suppress_collision_avoidance", 
+        #                                                                Empty, 
+        #                                                          latch=True)}
+                                        
+        self._suppress_contact_safety = {'right': False}
+        # self._suppress_contact_safety = {'left': False, 'right': False}
+        self._supp_con_safety_pubs = {'right': 
+            rospy.Publisher("/robot/limb/right/suppress_contact_safety", 
+                                                                  Empty, 
+                                                            latch=True)}
+        # self._supp_con_safety_pubs = {'left': 
+        #     rospy.Publisher("/robot/limb/left/suppress_contact_safety", 
+        #                                                          Empty, 
+        #                                                    latch=True), 
+        #                                 'right': 
+        #     rospy.Publisher("/robot/limb/right/suppress_contact_safety", 
+        #                                                           Empty, 
+        #                                                     latch=True)}
+                                        
+        self._suppress_cuff_interaction = {'right': False}
+        # self._suppress_cuff_interaction = {'left': False, 'right': False}
+        self._supp_cuff_int_pubs = {'right': 
             rospy.Publisher("/robot/limb/right/suppress_cuff_interaction", 
                                                                     Empty, 
                                                               latch=True)}
+        # self._supp_cuff_int_pubs = {'left': 
+        #     rospy.Publisher("/robot/limb/left/suppress_cuff_interaction", 
+        #                                                            Empty, 
+        #                                                      latch=True), 
+        #                             'right': 
+        #     rospy.Publisher("/robot/limb/right/suppress_cuff_interaction", 
+        #                                                             Empty, 
+        #                                                       latch=True)}
+
                                         
-        self._suppress_gravity_compensation = {'left': False, 'right': False}
-        self._supp_grav_comp_pubs = {'left': 
-            rospy.Publisher("/robot/limb/left/suppress_gravity_compensation", 
-                                                                       Empty, 
-                                                                 latch=True), 
-                                     'right': 
+        self._suppress_gravity_compensation = {'right': False}
+        # self._suppress_gravity_compensation = {'left': False, 'right': False}
+        self._supp_grav_comp_pubs = {'right': 
             rospy.Publisher("/robot/limb/right/suppress_gravity_compensation", 
                                                                         Empty, 
                                                                   latch=True)}
+        # self._supp_grav_comp_pubs = {'left': 
+        #     rospy.Publisher("/robot/limb/left/suppress_gravity_compensation", 
+        #                                                                Empty, 
+        #                                                          latch=True), 
+        #                              'right': 
+        #     rospy.Publisher("/robot/limb/right/suppress_gravity_compensation", 
+        #                                                                 Empty, 
+        #                                                           latch=True)}
         
         # start suppressions background thread
         self._t_suppressions = threading.Thread(
@@ -198,21 +230,26 @@ class BaxterPeripherals_impl(object):
         # gravity compensation subscription
         self._grav_comp_lock = threading.Lock()
         self._gravity_compensation_torques = OrderedDict( 
-                        zip(baxter_interface.Limb('left').joint_names() + \
-                                baxter_interface.Limb('right').joint_names(), 
-                                                                   [0.0]*14))
-        rospy.Subscriber("/robot/limb/left/gravity_compensation_torques", 
-                        SEAJointState, self.grav_comp_callback)
+                        zip(intera_interface.Limb('right').joint_names(), 
+                                                                   [0.0]*7))
+        # self._gravity_compensation_torques = OrderedDict( 
+        #                 zip(intera_interface.Limb('left').joint_names() + \
+        #                         intera_interface.Limb('right').joint_names(), 
+        #                                                            [0.0]*14))
+        # rospy.Subscriber("/robot/limb/left/gravity_compensation_torques", 
+        #                 SEAJointState, self.grav_comp_callback)
         rospy.Subscriber("/robot/limb/right/gravity_compensation_torques", 
                         SEAJointState, self.grav_comp_callback)
         
         # navigators
-        self._navigators = {'left': baxter_interface.Navigator('left'), 
-                            'right': baxter_interface.Navigator('right'), 
-                            'torso_left': 
-                                baxter_interface.Navigator('torso_left'), 
-                            'torso_right': 
-                                baxter_interface.Navigator('torso_right')}
+        self._navigators = {'right': intera_interface.Navigator('right')}
+
+        # self._navigators = {'left': intera_interface.Navigator('left'), 
+        #                     'right': intera_interface.Navigator('right'), 
+        #                     'torso_left': 
+        #                         intera_interface.Navigator('torso_left'), 
+        #                     'torso_right': 
+        #                         intera_interface.Navigator('torso_right')}
 
         # initialize frame transform 
         self._listener = tf.TransformListener()
@@ -289,11 +326,11 @@ class BaxterPeripherals_impl(object):
         if arm in self._valid_limb_names.keys():
             return self._accelerometers[self._valid_limb_names[arm]]
         
-    def left_accel_callback(self, data):
-        if (data.linear_acceleration):
-            self._accelerometers['left'][0] = data.linear_acceleration.x
-            self._accelerometers['left'][1] = data.linear_acceleration.y
-            self._accelerometers['left'][2] = data.linear_acceleration.z
+    # def left_accel_callback(self, data):
+    #     if (data.linear_acceleration):
+    #         self._accelerometers['left'][0] = data.linear_acceleration.x
+    #         self._accelerometers['left'][1] = data.linear_acceleration.y
+    #         self._accelerometers['left'][2] = data.linear_acceleration.z
         
     def right_accel_callback(self, data):
         if (data.linear_acceleration):
@@ -443,7 +480,7 @@ class BaxterPeripherals_impl(object):
     def suppressions_worker(self):
         while self._running:
             time.sleep(0.05)
-            self.publishSuppressions('left')
+            # self.publishSuppressions('left')
             self.publishSuppressions('right')
     
     # gravity compensation info functions
@@ -462,7 +499,7 @@ class BaxterPeripherals_impl(object):
     def getNavigatorState(self, navigator):
         if (navigator in self._navigators.keys()):
             navigator_state = RR.RobotRaconteurNode.s.NewStructure(
-                                'BaxterPeripheral_interface.NavigatorState')
+                                'SawyerPeripheral_interface.NavigatorState')
             navigator_state.ok_button = self._navigators[navigator].button0
             navigator_state.cancel_button = self._navigators[navigator].button1
             navigator_state.show_button = self._navigators[navigator].button2
@@ -481,7 +518,7 @@ class BaxterPeripherals_impl(object):
     def lookUptransforms(self, target_frame, source_frame):
         position, quaternion = self._listener.lookupTransform(target_frame, source_frame, rospy.Time(0))
         relativePose = RR.RobotRaconteurNode.s.NewStructure( 
-                          'BaxterPeripheral_interface.framePose' )
+                          'SawyerPeripheral_interface.framePose' )
         relativePose.position = list(position)
         relativePose.quaternion = list(quaternion)
         return relativePose
@@ -490,7 +527,7 @@ class BaxterPeripherals_impl(object):
 def main(argv):
     # parse command line arguments
     parser = argparse.ArgumentParser(
-                        description='Initialize Baxter Peripherals.')
+                        description='Initialize Sawyer Peripherals.')
     parser.add_argument('--port', type=int, default = 0,
                     help='TCP port to host service on ' + \
                             '(will auto-generate if not specified)')
@@ -500,7 +537,7 @@ def main(argv):
     RR.RobotRaconteurNode.s.UseNumPy=True
 
     #Set the Node name
-    RR.RobotRaconteurNode.s.NodeName="BaxterPeripheralServer"
+    RR.RobotRaconteurNode.s.NodeName="SawyerPeripheralServer"
 
     
     #Create transport, register it, and start the server
@@ -517,21 +554,21 @@ def main(argv):
     
     #Register the service type and the service
     print "Starting Service"
-    RR.RobotRaconteurNode.s.RegisterServiceType(baxter_servicedef)
+    RR.RobotRaconteurNode.s.RegisterServiceType(sawyer_servicedef)
     
     #Initialize object
-    baxter_obj = BaxterPeripherals_impl()    
+    sawyer_obj = SawyerPeripherals_impl()    
     
-    RR.RobotRaconteurNode.s.RegisterService("BaxterPeripherals",
-                 "BaxterPeripheral_interface.BaxterPeripherals",
-                                                     baxter_obj)
+    RR.RobotRaconteurNode.s.RegisterService("SawyerPeripherals",
+                 "SawyerPeripheral_interface.SawyerPeripherals",
+                                                     sawyer_obj)
 
     print "Service started, connect via"
     print "tcp://localhost:" + str(port) + \
-                    "/BaxterPeripheralServer/BaxterPeripherals"
+                    "/SawyerPeripheralServer/SawyerPeripherals"
     raw_input("press enter to quit...\r\n")
     
-    baxter_obj.close()
+    sawyer_obj.close()
 
     # This must be here to prevent segfault
     RR.RobotRaconteurNode.s.Shutdown()
